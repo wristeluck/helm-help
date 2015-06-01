@@ -1,0 +1,55 @@
+#ifndef __FILE_STORE_H__
+#define __FILE_STORE_H__
+
+#include <Arduino.h>
+
+class FileStore {
+  public:
+    FileStore(unsigned long catalog_sector);
+    
+    void append(byte data);
+    void append(int data);
+    void append(long data);
+    void append(unsigned int data);
+    void append(unsigned long data);
+    void append(float data);
+    void append(double data);
+    void append(char *str);
+ 
+    void logSeparator();
+    void logImu(long timestamp, double yaw, double pitch, double roll);
+    void logQuaternion(long timestamp, int16_t w, int16_t x, int16_t y, int16_t z);
+    void logPid(long timestamp, double target_heading, double current_heading, double rudder_angle);
+    void logPidParam(long timestamp, double kp, double ki, double kd, byte deadband);
+    void logGps(long timestamp, char *datetime, double latitude, double longitude, int speed_knots, int track_angle);
+ 
+    uint8_t *getMpuData(byte bank);
+ 
+  private:
+    void append(void* data, long len);
+
+    void initialiseCatalog();
+    void flushBuffer();
+    unsigned long currentDataSector() { return iCurrentRecord >> 9; }
+    unsigned long currentDataOffset() { return iCurrentRecord & 511; }
+
+    unsigned long iCatalogSector;
+    unsigned long iDataSize;
+    uint32_t iCurrentRecord;
+    byte iSectorBuffer[512];
+
+//    uint32_t iBarrier;
+//    void checkOverflow();
+
+    static const byte SEPARATOR;
+    static const byte TIMESTAMP_RECORD;
+    static const byte IMU_RECORD;
+    static const byte QUATERNION_RECORD;
+    static const byte PID_RECORD;
+    static const byte PID_PARAM_RECORD;
+    static const byte GPS_RECORD;
+    static const long SAFECASE;
+};
+
+
+#endif //__FILE_STORE_H__

@@ -1,0 +1,225 @@
+#include "file_store.h"
+#include <mmc.h>
+
+// max supported card size - 4GB
+// data is a file - max size 4GB - 8388608 (2^23) sectors 
+// catalog is a single sector - 512 (2^9) bytes
+// first byte holds the 'current' record
+// next 3 bytes hold the max sector size for the data file
+// can contain 127 records - each 4 bytes
+// each record holds the data sector (23 bits) |  32 bits (4 bytes)
+// and the offset within that sector (9 bits)  |    total
+// the last record always points to the current append point
+// which is the end of file unless the data has wrapped around
+
+const byte FileStore::SEPARATOR = 0;
+const byte FileStore::TIMESTAMP_RECORD = 1;
+const byte FileStore::IMU_RECORD = 2;
+const byte FileStore::PID_RECORD = 3;
+const byte FileStore::PID_PARAM_RECORD = 4;
+const byte FileStore::GPS_RECORD = 5;
+const byte FileStore::QUATERNION_RECORD = 6;
+const byte FileStore::COMMENT_RECORD = 7;
+const long FileStore::SAFECASE = 0x5AFECA5E;
+
+FileStore::FileStore(
+    unsigned long catalog_sector
+                     ) : iCatalogSector(catalog_sector), iActive(false) {
+  if (mmc::initialize() != RES_OK) {
+    Serial.println(F("mmc init failed.\n"));
+  } else {
+  // on startup, read the current append point from the catalog, add a new entry
+  // initialize iCurrentRecord and iDataSize from this
+    iActive = true;
+//    initialiseCatalog();
+  }
+}
+
+/*void FileStore::checkOverflow() {
+  if(iBarrier != 0) {
+    Serial.println("********** Buffer overflow *************");
+  }
+}*/
+
+void FileStore::initialiseCatalog() {
+  // map the catalog sector into sector buffer
+  mmc::readSectors(iSectorBuffer, iCatalogSector, 1);
+  uint32_t header;
+  memcpy((void*)&header, iSectorBuffer, 4);
+  iDataSize = header & 0xFFFFFF00; // LSB is the current record (first byte - little endian)
+  // first byte is the (last) current record
+  byte currentCatalogOffset = iSectorBuffer[0];
+  memcpy((void*)&iCurrentRecord, iSectorBuffer + currentCatalogOffset * 4 + 4, 4);
+  if(iCurrentRecord == 0) { // fresh formatted card
+    iCurrentRecord = 512;
+  }
+  Serial.print("initialiseCatalog, iCurrentRecord = ");
+  Serial.println(iCurrentRecord);
+  Serial.print("currentCatalogOffset = ");
+  Serial.println(currentCatalogOffset);
+  Serial.print("memcmp = ");
+  Serial.println(memcmp(iSectorBuffer + currentCatalogOffset * 4, iSectorBuffer + currentCatalogOffset * 4 + 4, 4));
+  // increment the record number (wrap around if over 126)
+  // only do this if the iCurrentRecord actually points to data
+  // need to avoid 'double-resets' filling up the catalog sector
+  if(currentCatalogOffset <= 1 || memcmp(iSectorBuffer + currentCatalogOffset * 4, iSectorBuffer + currentCatalogOffset * 4 + 4, 4))
+  {
+    currentCatalogOffset++;
+    if(currentCatalogOffset > 126) currentCatalogOffset = 0;
+    // initialize the current record into this new catalog slot
+    iSectorBuffer[0] = currentCatalogOffset;
+    memcpy(iSectorBuffer + currentCatalogOffset * 4 + 4, (void*)&iCurrentRecord, 4);
+    // then write it back to the SD card
+    mmc::writeSectors(iSectorBuffer, iCatalogSector, 1);
+  }
+  memset(iSectorBuffer, 0, 512);	
+}
+
+void FileStore::append(void* data, long len) {
+  if(!iActive) return;
+/*
+  Serial.print("append, iCurrentRecord = ");
+  Serial.print(iCurrentRecord);
+  Serial.print(", currentDataOffset()=");
+  Serial.print(currentDataOffset());
+  Serial.print(", len=");
+  Serial.println(len);
+*/
+  if(currentDataOffset() + len > 512) {
+    // flush the sector buffer
+    // need to split the record if it crosses the boundary
+    if(currentDataOffset() < 512) {
+      // write the part that fits in this sector
+      int remainingSize = 512 - currentDataOffset();
+      memcpy(iSectorBuffer + currentDataOffset(), data, remainingSize);
+      data = (void*)((long)data + remainingSize);
+      len -= remainingSize;
+      iCurrentRecord += remainingSize;
+    }
+    flushBuffer();
+  }
+  memcpy(iSectorBuffer + currentDataOffset(), data, len);
+  iCurrentRecord += len;
+  if(currentDataOffset() == 0) {
+    flushBuffer();
+  }
+}
+
+void FileStore::flushBuffer() {
+/*
+  Serial.print("flushBuffer, iCurrentRecord = ");
+  Serial.print(iCurrentRecord);
+  Serial.print(", iCatalogSector=");
+  Serial.print(iCatalogSector);
+  Serial.print(", currentDataSector()=");
+  Serial.print(currentDataSector());
+  Serial.print(", currentDataOffset()=");
+  Serial.print(currentDataOffset());
+*/
+    mmc::writeSectors(iSectorBuffer, iCatalogSector + currentDataSector(), 1);
+	
+// TODO check first that we are not at the end of file (iMaxDataSector)
+// if we are, need to wrap around
+	
+    // update catalog with current data sector  
+    mmc::readSectors(iSectorBuffer, iCatalogSector, 1);
+    int currentCatalogOffset = iSectorBuffer[0];
+    memcpy(iSectorBuffer + currentCatalogOffset * 4 + 4, &iCurrentRecord, 4);
+    mmc::writeSectors(iSectorBuffer, iCatalogSector, 1);
+    memset(iSectorBuffer, 0, 512);	
+}
+
+void FileStore::append(byte data) {
+  append((void *)&data, sizeof(data));
+}
+
+void FileStore::append(int data) {
+  append((void *)&data, sizeof(data));
+}
+
+void FileStore::append(long data) {
+  append((void *)&data, sizeof(data));
+}
+
+void FileStore::append(unsigned int data) {
+  append((void *)&data, sizeof(data));
+}
+
+void FileStore::append(unsigned long data) {
+  append((void *)&data, sizeof(data));
+}
+void FileStore::append(float data) {
+  append((void *)&data, sizeof(data));
+}
+
+void FileStore::append(double data) {
+  append((void *)&data, sizeof(data));
+}
+
+void FileStore::append(char *str) {
+  char *ptr = str;
+  append((byte)strlen(str));
+  while(*ptr != '\0') {
+    append(ptr++, 1);
+  }
+}
+
+void FileStore::logSeparator() {
+  append(SEPARATOR);
+  append(SAFECASE); // eyecatcher
+}
+
+void FileStore::logImu(long timestamp, double yaw, double pitch, double roll) {
+  append(IMU_RECORD);
+  append(timestamp);
+  append(yaw);
+  append(pitch);
+  append(roll);
+}
+
+void FileStore::logQuaternion(long timestamp, int16_t w, int16_t x, int16_t y, int16_t z) {
+  append(QUATERNION_RECORD);
+  append(timestamp);
+  append(w);
+  append(x);
+  append(y);
+  append(z);
+}
+
+void FileStore::logPid(long timestamp, double target_heading, double current_heading, double rudder_angle) {
+  append(PID_RECORD);
+  append(timestamp);
+  append(target_heading);
+  append(current_heading);
+  append(rudder_angle);
+}
+
+void FileStore::logPidParam(long timestamp, double kp, double ki, double kd, byte deadband) {
+  append(PID_PARAM_RECORD);
+  append(timestamp);
+  append(kp);
+  append(ki);
+  append(kd);
+  append(deadband);
+}
+
+void FileStore::logGps(long timestamp, char *datetime, double latitude, double longitude, int speed_knots, int track_angle) {
+  append(GPS_RECORD);
+  append(timestamp);
+  append(datetime);
+  append(latitude);
+  append(longitude);
+  append(speed_knots);
+  append(track_angle);
+}
+
+void FileStore::logComment(long timestamp, char *comment) {
+  append(COMMENT_RECORD);
+  append(timestamp);
+  append(comment);
+}
+
+//uint8_t *FileStore::getMpuData(byte bank) {
+//  mmc::readSectors(iSectorBuffer, 640 + 512 * bank, 1);
+//  return iSectorBuffer;
+//}

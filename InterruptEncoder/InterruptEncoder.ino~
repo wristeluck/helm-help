@@ -1,0 +1,75 @@
+// Pin assignments
+#define PIN_SERVO        9  // must be a PWM  
+#define PIN_LCD_RS       4  
+#define PIN_LCD_EN       7
+#define PIN_LCD_D4      14
+#define PIN_LCD_D5      15
+#define PIN_LCD_D6      16
+#define PIN_LCD_D7      17
+#define PIN_ROT_A        3 // INT1
+#define PIN_ROT_B        8//A7
+#define PIN_ROT_PUSH    A6 // using analog input - set internal pullup resistor
+#define PIN_ROT_LED_R    5
+#define PIN_ROT_LED_G    6
+#define PIN_ROT_LED_B    0 // no spare pins!!!
+
+
+#define LCD_CHARS   16
+#define LCD_LINES    2
+
+char rotation = 0;
+int counter = 0;
+
+long bouncy;
+
+// LCD
+#include <LiquidCrystal.h>
+LiquidCrystal lcd(PIN_LCD_RS, PIN_LCD_EN, PIN_LCD_D4, PIN_LCD_D5, PIN_LCD_D6, PIN_LCD_D7);
+
+void setup() {
+  // put your setup code here, to run once:
+    pinMode(PIN_ROT_PUSH, INPUT); // sets analog pin for input 
+    pinMode(PIN_ROT_A, INPUT_PULLUP);  
+    pinMode(PIN_ROT_B, INPUT_PULLUP); // sets analog pin for input 
+    attachInterrupt(1, decoder, LOW);
+    lcd.begin(LCD_CHARS, LCD_LINES);
+  Serial.begin(9600);
+
+    digitalWrite(PIN_ROT_LED_R, HIGH);
+    bouncy = millis();
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  
+  if(rotation == 0) {
+    int a = analogRead(6);
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("  analogRead() ");
+    lcd.setCursor(0,1);
+    lcd.print("  value is :");
+    lcd.print(a);
+    delay(250);
+  } else {
+    counter += rotation;
+    Serial.println(counter);
+    rotation = 0;
+  }
+}
+
+void decoder()
+//very short interrupt routine 
+//Remember that the routine is only called when pin1
+//changes state, so it's the value of pin2 that we're
+//interrested in here
+{
+  if(millis() - bouncy > 5) {
+    if (digitalRead(PIN_ROT_A) == digitalRead(PIN_ROT_B)) {
+      rotation++; //if encoder channels are the same, direction is CW
+    } else {
+      rotation--; //if they are not the same, direction is CCW
+    }
+    bouncy = millis();
+  }
+}

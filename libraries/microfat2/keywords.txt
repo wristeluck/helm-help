@@ -1,0 +1,25 @@
+#######################################
+# Syntax Coloring Map For DevicePrint
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+microfat2 KEYWORD1
+READFN KEYWORD1
+WALKER_FN KEYWORD1
+
+partition_record_t KEYWORD2
+boot_sector_t KEYWORD2
+directory_entry_t KEYWORD2
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+initialize  KEYWORD2
+walkDirectory KEYWORD2
+getFileInformation KEYWORD2
+locateFileStart KEYWORD2
+
