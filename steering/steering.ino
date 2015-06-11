@@ -33,7 +33,6 @@
 #define LCD_CHARS   16
 #define LCD_LINES    2
 
-
 // LCD
 #include <LiquidCrystal.h>
 LiquidCrystal lcd(PIN_LCD_RS, PIN_LCD_EN, PIN_LCD_D4, PIN_LCD_D5, PIN_LCD_D6, PIN_LCD_D7);
@@ -42,6 +41,8 @@ LiquidCrystal lcd(PIN_LCD_RS, PIN_LCD_EN, PIN_LCD_D4, PIN_LCD_D5, PIN_LCD_D6, PI
 #include <Servo.h> 
 Servo rudder_servo;  // create servo object to control a servo 
                 // a maximum of eight servo objects can be created 
+
+#define RUDDER_CENTRE 99 // the servo position that centres the rudder
 
 // SD card logger
 FileStore fileStore(640); // catalog (first) sector of data file
@@ -87,7 +88,7 @@ uint16_t EEMEM kp;
 uint16_t EEMEM ki;
 uint16_t EEMEM kd;
 byte  EEMEM db;
-PID myPID(&current_yaw, &target_rudder, &target_yaw, 1.0, 0.4, 0.2, DIRECT);
+PID myPID(&current_yaw, &target_rudder, &target_yaw, 1.0, 0.4, 0.2, REVERSE);
 
 byte deadband = 1;  // default 1 degree
 boolean autoSteer = false;
@@ -95,14 +96,6 @@ boolean autoSteer = false;
 
 // TODO move the following into a structure
 // see http://books.google.co.uk/books?id=U6EtJwBzY1oC&amp;pg=PA100&amp;lpg=PA100&amp;dq=arduino+maximum+binary+sketch+size&amp;source=bl&amp;ots=EcziTPs6kG&amp;sig=N3RMoImznXxLGF3fwiNETKX-gBY&amp;hl=en&amp;sa=X&amp;ei=KDd-VOquKI3pasuUgfgO&amp;ved=0CEwQ6AEwBQ
-//int error_plot_period = 0; // milliseconds - 0 means error_plot off
-//long error_plot_last_datum;
-//unsigned char error_plot_range = 30; // +/- degrees
-
-// Serial command line buffers
-//char request_buffer[32];
-//byte request_index = 0;
-//static void process_command(char *command);
 
 // serial streaming support
 //template<class T> inline Print &operator <<(Print &obj, T arg) { obj.print(arg); return obj; }
@@ -276,8 +269,8 @@ void setup() {
 
     // initialise servo
     rudder_servo.attach(PIN_SERVO);
-    target_rudder = 90;  // servo in centre position
-    current_rudder = 90;
+    target_rudder = RUDDER_CENTRE;  // servo in centre position
+    current_rudder = RUDDER_CENTRE;
     rudder_time = millis();
     
     fileStore.logSeparator();
@@ -291,29 +284,6 @@ void setup() {
 
 void loop() {
     checkButton();
-
-    // handle Serial CLI
-#ifdef NEVER
-    if(Serial.available()) {
-      // this relies on all of the data being available at once (within this do...while loop)
-
-      do {
-        char aChar = Serial.read();
-        if(aChar == '\n') {
-          // End of command.
-    Serial << "eol: " << request_buffer << "\n";
-          process_command(request_buffer);
-          request_index = 0;
-          request_buffer[request_index] = NULL;
-          break;
-        } else {
-          request_buffer[request_index] = aChar;
-          request_index++;
-          request_buffer[request_index] = '\0'; // Keep the string NULL terminated
-        }
-      } while(Serial.available());
-    }
-#endif
 
 #ifdef GPS
     // check GPS
@@ -331,30 +301,12 @@ void loop() {
         } else {
           gps_buffer[gps_index] = aChar;
           gps_index++;
-//          if(gps_index > 78) {
-//            Serial << "*** GPS overflow: " << gps_index << " -> " << aChar << "\n";
-//          }
           gps_buffer[gps_index] = '\0'; // Keep the string NULL terminated
  //     Serial.println(gps_buffer);
         }
       } while(Serial.available());
     }
 #endif //GPS
-
-/*
-    // error plot
-    if(error_plot_period && ((error_plot_last_datum + error_plot_period) < millis())) {
-      // write a new plot point
-      // |                               |                              |
-      byte datum = (byte)(39 * (target_yaw - current_yaw) / error_plot_range) + 39;
-      char line[80];
-      memset(line, 0x20, 79);
-      line[79] = '\0';
-      line[datum] = '|';
-      Serial << line << "\n";
-      error_plot_last_datum = millis();
-    }
-*/
 
     // wait for MPU interrupt or extra packet(s) available
     if(mpuInterrupt || fifoCount >= MPU_PACKET_SIZE) {
@@ -404,12 +356,9 @@ void loop() {
           if (current_yaw - target_yaw > 180)
              current_yaw -= 360;
 
-          // if(!initialized && millis() > 3000) { // settle for 3 seconds following power on
-          //   // turn the PID on
-          //   autoSteer = true;
-          //   target_yaw = current_yaw;
-          //   initialized = true;
-          // }
+          long current_time = millis();
+//          fileStore.logImu(current_time, current_yaw, ypr[1] * 180/M_PI, ypr[2] * 180/M_PI); // yaw, pitch, roll
+          fileStore.logQuaternion(current_time, (int16_t)qw, (int16_t)qx, (int16_t)qy, (int16_t)qz);
 
           // dead-band - turn off PID if error is below threshold
           if(autoSteer) {
@@ -425,34 +374,9 @@ void loop() {
 
           if(myPID.Compute()) {
             // new output available
-            
-/*
-            if(!error_plot_period) {
-              Serial << target_yaw << "\t" << current_yaw << "\t";
-              if(target_yaw > current_yaw) {
-                Serial << "R\t";
-              } else {
-                Serial <<"L\t";
-              }
-              Serial << target_rudder;
-              if(target_rudder > 90) {
-                Serial << "\tstarboard ";
-              } else {
-                Serial << "\tport      ";
-              }
-              Serial << abs(target_rudder - 90) * 1.1111;
-              Serial << "%\t";
-              Serial << freeRam();
-              Serial << "\n";
-            }
-  */
-            
             refresh_display();
             
             // log to SD card
-            long current_time = millis();
-//            fileStore.logImu(current_time, current_yaw, ypr[1] * 180/M_PI, ypr[2] * 180/M_PI); // yaw, pitch, roll
-            fileStore.logQuaternion(current_time, (int16_t)qw, (int16_t)qx, (int16_t)qy, (int16_t)qz);
             fileStore.logPid(current_time, target_yaw, current_yaw, target_rudder);
           }
       }
@@ -461,7 +385,7 @@ void loop() {
     // adjust the rudder - every 200 ms
     unsigned long now = millis();
     unsigned long last_adjustment = now - rudder_time;
-    if((last_adjustment) >= 200) {
+    if((last_adjustment) >= 50) {
       double rudder_diff = target_rudder - (double)current_rudder;
       double shift_limit = (rudder_rate * (double)last_adjustment / 1000.0);
       byte new_position;
@@ -474,6 +398,8 @@ void loop() {
         current_rudder = new_position;
         rudder_servo.write(current_rudder);
       }
+      refresh_display();
+      rudder_time = now;
     }
     
 }
@@ -514,10 +440,10 @@ void refresh_display() {
     }
 
     // rudder
-    int disp_rudder = (int)(abs(target_rudder - 90) * 1.1111);
+    int disp_rudder = (int)(abs(target_rudder - RUDDER_CENTRE) * 1.1111);
     format_number(disp_rudder, 0, line+14);
     line[14] = '%';
-    if(target_rudder < 90) {
+    if(target_rudder < RUDDER_CENTRE) {
       line[11] = 0x7F;
     } else {
       line[15] = 0x7E;
@@ -582,137 +508,6 @@ char *format_number(unsigned x, char shift, char *s) {
   }
   return s;
 }
-
-#ifdef NEVER
-static void process_command(char *command) {
-  char *varname, *argptr;
-  char *saveptr1;
-  double value;
-
-  switch(command[0]) {
-  case '?': {
-    // getter
-    varname = strtok_r(command+1, " ,", &saveptr1);
-    // valid variables - case insensitive
-    // err, kp, ki, kd, kpid, db
-    // err can have extra arguments
-
-    if(strcasestr(varname, "kpid")) {
-      Serial << "Kp = " << myPID.GetKp() << ", Ki = " << myPID.GetKi() << ", Kd = " << myPID.GetKd();
-    } else if(strcasestr(varname, "kp")) {
-      Serial << "Kp = " << myPID.GetKp();
-    } else if(strcasestr(varname, "ki")) {
-      Serial << "Ki = " << myPID.GetKi();
-    } else if(strcasestr(varname, "kd")) {
-      Serial << "Kd = " << myPID.GetKd();
-    } else if(strcasestr(varname, "db")) {
-      Serial << "Deadband = " << deadband;
-    } else if(strcasestr(varname, "err")) {
-      double err = target_yaw - current_yaw;
-      //  handle the optional arguments
-      argptr = strtok_r(NULL, " ,", &saveptr1);
-      if(argptr == NULL) {
-        // just print the error
-        if(target_yaw > current_yaw) {
-          Serial << "Error = " << abs(err) << " L";
-        } else {
-          Serial << "Error = " << abs(err) << " R";
-        }
-      } else {
-        if(*argptr == 'p') {
-          // plot the errors
-          Serial << "Error plot\n";
-          error_plot_period = 1000; 
-          error_plot_range = 30;
-          error_plot_last_datum = millis() - error_plot_period;
-        }
-      }
-    } else if(strcasestr(varname, "auto")) {
-      Serial << "AutoSteer: " << autoSteer;
-    }
-    break;
-  }
-  case 'q': {
-    // stop plotting
-    error_plot_period = 0;
-    break;
-  }
-  case '=': {
-    // setter
-    varname = strtok_r(command+1, " ,", &saveptr1);
-    argptr = strtok_r(NULL, " ,", &saveptr1);
-    if(argptr == NULL) {
-      // report error: no value given
-      break;
-    }
-    // valid variables - case insensitive
-    // kp, ki, kd, kpid, db
-    // kpid takes 3 arguments
-    value = atof(argptr);
-    if(strcasestr(varname, "kpid")) {
-      // get the next 2 arguments
-      argptr = strtok_r(NULL, " ,", &saveptr1);
-      if(argptr == NULL) {
-        // report error: no value given
-        break;
-      }
-      double ki_val = atof(argptr);
-      argptr = strtok_r(NULL, " ,", &saveptr1);
-      if(argptr == NULL) {
-        // report error: no value given
-        break;
-      }
-      double kd_val = atof(argptr);
-      myPID.SetTunings(value, ki_val, kd_val);
-      eeprom_write_word(&kp, (uint16_t)(value * 100));
-      eeprom_write_word(&ki, (uint16_t)(ki_val * 100));
-      eeprom_write_word(&kd, (uint16_t)(kd_val * 100));
-    } else if(strcasestr(varname, "kp")) {
-      myPID.SetTunings(value, myPID.GetKi(), myPID.GetKd());
-      eeprom_write_word(&kp, (uint16_t)(value * 100));
-    } else if(strcasestr(varname, "ki")) {
-      myPID.SetTunings(myPID.GetKp(), value, myPID.GetKd());
-      eeprom_write_word(&ki, (uint16_t)(value * 100));
-    } else if(strcasestr(varname, "kd")) {
-      myPID.SetTunings(myPID.GetKp(), myPID.GetKi(), value);
-      eeprom_write_word(&kd, (uint16_t)(value * 100));
-    } else if(strcasestr(varname, "db")) {
-      deadband = (byte)value;
-      eeprom_write_byte(&db, deadband);
-    }
-    // TODO write these values into EEPROM
-    fileStore.logPidParam(millis(), myPID.GetKp(), myPID.GetKi(), myPID.GetKd(), deadband);
-    Serial << "Set " << varname << " to " << value;
-    break;
-  }
-  case 'l':
-  case 'L': {
-    // left
-    argptr = strtok_r(command+1, " ,", &saveptr1);
-    value = atof(argptr);
-    target_yaw -= value;
-    Serial << "Left " << value << " degrees";
-    break;
-  }
-  case 'r':
-  case 'R': {
-    // right
-    argptr = strtok_r(command+1, " ,", &saveptr1);
-    value = atof(argptr);
-    target_yaw += value;
-    Serial << "Right " << value << " degrees";
-    break;
-  }
-  case 'c':
-  case 'C': {
-    // comment to log
-
-    break;
-  }
-  }
-  Serial << "\n";
-}
-#endif // NEVER
 
 #ifdef GPS
 static void process_gps_sentence(char *sentence) {
@@ -861,10 +656,12 @@ void fsm_heading(StateMachine *fsm, Event event) {
 void fsm_rudder(StateMachine *fsm, Event event) {
   switch(event) {
     case E_ROT_INC:
-      target_rudder++;
+      if(target_rudder <= 179)
+        target_rudder++;
       break;
     case E_ROT_DEC:
-      target_rudder--;
+      if(target_rudder >= 1)
+        target_rudder--;
       break;
     case E_CLICK:
       // switch to auto-heading using the current_heading
@@ -874,7 +671,7 @@ void fsm_rudder(StateMachine *fsm, Event event) {
       break;
     case E_LONG_CLICK:
       // centre the rudder (slowly)
-      target_rudder = 90;
+      target_rudder = RUDDER_CENTRE;
       break;
   }
 }

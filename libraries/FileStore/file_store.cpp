@@ -42,21 +42,25 @@ FileStore::FileStore(
 }*/
 
 void FileStore::initialiseCatalog() {
+  if(!iActive) return;
   // map the catalog sector into sector buffer
   mmc::readSectors(iSectorBuffer, iCatalogSector, 1);
   uint32_t header;
-  memcpy((void*)&header, iSectorBuffer, 4);
-  iDataSize = header & 0xFFFFFF00; // LSB is the current record (first byte - little endian)
+  memcpy((void*)&header, iSectorBuffer, 4); // header = iSectorBuffer (4 bytes)
+  iDataSize = header & 0x00FFFFFF; // LSB is the current record (first byte - little endian)
   // first byte is the (last) current record
   byte currentCatalogOffset = iSectorBuffer[0];
   memcpy((void*)&iCurrentRecord, iSectorBuffer + currentCatalogOffset * 4 + 4, 4);
-  if(iCurrentRecord == 0) { // fresh formatted card
-    iCurrentRecord = 512;
-  }
+  //  if(iCurrentRecord == 0) { // fresh formatted card
+  //    iCurrentRecord = 512; // TODO - I think we can remove this
+  //  }
   Serial.print("initialiseCatalog, iCurrentRecord = ");
   Serial.println(iCurrentRecord);
   Serial.print("currentCatalogOffset = ");
   Serial.println(currentCatalogOffset);
+  Serial.print(", iDataSize=");
+  Serial.println(iDataSize);
+
   Serial.print("memcmp = ");
   Serial.println(memcmp(iSectorBuffer + currentCatalogOffset * 4, iSectorBuffer + currentCatalogOffset * 4 + 4, 4));
   // increment the record number (wrap around if over 126)
@@ -106,20 +110,26 @@ void FileStore::append(void* data, long len) {
 }
 
 void FileStore::flushBuffer() {
-/*
+  /*
   Serial.print("flushBuffer, iCurrentRecord = ");
   Serial.print(iCurrentRecord);
   Serial.print(", iCatalogSector=");
   Serial.print(iCatalogSector);
+  Serial.print(", iDataSize=");
+  Serial.print(iDataSize);
   Serial.print(", currentDataSector()=");
   Serial.print(currentDataSector());
   Serial.print(", currentDataOffset()=");
-  Serial.print(currentDataOffset());
-*/
+  Serial.println(currentDataOffset());
+  */
     mmc::writeSectors(iSectorBuffer, iCatalogSector + currentDataSector(), 1);
 	
-// TODO check first that we are not at the end of file (iMaxDataSector)
+// check first that we are not at the end of file (iMaxDataSector)
 // if we are, need to wrap around
+    if(iCurrentRecord >= iDataSize) {
+      iCurrentRecord = 0;
+      Serial.println("******** WRAPPED ***********");
+    }
 	
     // update catalog with current data sector  
     mmc::readSectors(iSectorBuffer, iCatalogSector, 1);

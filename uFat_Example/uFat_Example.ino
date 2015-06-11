@@ -115,7 +115,8 @@ void showDirectory(void)
 
 void setup(void)
 {
-  Serial.begin(115200);
+//  Serial.begin(115200);
+  Serial.begin(9600);
 
   pprint(PSTR("uFat2 demonstration\n"));
   pprint(PSTR("http://arduinonut.blogspot.com\n\n"));

@@ -6,6 +6,7 @@
 class FileStore {
   public:
     FileStore(unsigned long catalog_sector);
+    void initialiseCatalog();
     
     void append(byte data);
     void append(int data);
@@ -22,13 +23,13 @@ class FileStore {
     void logPid(long timestamp, double target_heading, double current_heading, double rudder_angle);
     void logPidParam(long timestamp, double kp, double ki, double kd, byte deadband);
     void logGps(long timestamp, char *datetime, double latitude, double longitude, int speed_knots, int track_angle);
+    void logComment(long timestamp, char *comment);
  
-    uint8_t *getMpuData(byte bank);
+//    uint8_t *getMpuData(byte bank);
  
   private:
     void append(void* data, long len);
 
-    void initialiseCatalog();
     void flushBuffer();
     unsigned long currentDataSector() { return iCurrentRecord >> 9; }
     unsigned long currentDataOffset() { return iCurrentRecord & 511; }
@@ -37,6 +38,7 @@ class FileStore {
     unsigned long iDataSize;
     uint32_t iCurrentRecord;
     byte iSectorBuffer[512];
+    bool iActive;
 
 //    uint32_t iBarrier;
 //    void checkOverflow();
@@ -48,6 +50,7 @@ class FileStore {
     static const byte PID_RECORD;
     static const byte PID_PARAM_RECORD;
     static const byte GPS_RECORD;
+    static const byte COMMENT_RECORD;
     static const long SAFECASE;
 };
 
