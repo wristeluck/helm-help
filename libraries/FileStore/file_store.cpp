@@ -47,7 +47,7 @@ void FileStore::initialiseCatalog() {
   mmc::readSectors(iSectorBuffer, iCatalogSector, 1);
   uint32_t header;
   memcpy((void*)&header, iSectorBuffer, 4); // header = iSectorBuffer (4 bytes)
-  iDataSize = header & 0x00FFFFFF; // LSB is the current record (first byte - little endian)
+  iDataSize = header & 0xFFFFFF00; // LSB is the current record (first byte - little endian)
   // first byte is the (last) current record
   byte currentCatalogOffset = iSectorBuffer[0];
   memcpy((void*)&iCurrentRecord, iSectorBuffer + currentCatalogOffset * 4 + 4, 4);

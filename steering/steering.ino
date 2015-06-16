@@ -104,7 +104,7 @@ long buttonTime = millis();
 long rotaryTime = millis();
 boolean isPressed = false;
 
-typedef enum { E_ROT_INC, E_ROT_DEC, E_CLICK, E_LONG_CLICK } Event;
+typedef enum { E_NULL, E_ROT_INC, E_ROT_DEC, E_CLICK, E_LONG_CLICK } Event;
 typedef struct FSM StateMachine; 
 typedef void (*EventHandler)(StateMachine *sm, Event input);   
 void checkButton();
@@ -157,19 +157,23 @@ void dmpDataReady() {
     mpuInterrupt = true;
 }
 
+volatile Event pendingEvent = E_NULL;
 void decoder()
 //very short interrupt routine 
 //this routine is only called when pin1
 //changes state, so it's the value of pin2 that we're
 //interested in here
 {
-  if(millis() - rotaryTime > 5) { // 5 ms de-bounce period
+  unsigned long now = millis(); 
+  if(now - rotaryTime > 5) { // 5 ms de-bounce period
     if (digitalRead(PIN_ROT_A) == digitalRead(PIN_ROT_B)) {
-      trigger(E_ROT_INC); //if encoder channels are the same, direction is CW
+      //      trigger(E_ROT_INC); //if encoder channels are the same, direction is CW
+      pendingEvent = E_ROT_INC;
     } else {
-      trigger(E_ROT_DEC); //if they are not the same, direction is CCW
+      //      trigger(E_ROT_DEC); //if they are not the same, direction is CCW
+      pendingEvent = E_ROT_DEC;
     }
-    rotaryTime = millis();
+    rotaryTime = now;
   }
 }
 
@@ -283,6 +287,12 @@ void setup() {
 // ================================================================
 
 void loop() {
+    if(pendingEvent != E_NULL) {
+      Event event = pendingEvent;
+      pendingEvent = E_NULL;
+      trigger(event);      
+    }
+
     checkButton();
 
 #ifdef GPS
@@ -382,7 +392,7 @@ void loop() {
       }
     }
 
-    // adjust the rudder - every 200 ms
+    // adjust the rudder - every 50 ms
     unsigned long now = millis();
     unsigned long last_adjustment = now - rudder_time;
     if((last_adjustment) >= 50) {
@@ -629,8 +639,6 @@ void checkButton() {
 }
 
 void trigger(Event event) {
-//  Serial.print("Event: ");
-//  Serial.println(event);
   (ui.state)(&ui, event);
   eventRaised = true;
 }
@@ -656,12 +664,12 @@ void fsm_heading(StateMachine *fsm, Event event) {
 void fsm_rudder(StateMachine *fsm, Event event) {
   switch(event) {
     case E_ROT_INC:
-      if(target_rudder <= 179)
-        target_rudder++;
-      break;
-    case E_ROT_DEC:
       if(target_rudder >= 1)
         target_rudder--;
+      break;
+    case E_ROT_DEC:
+      if(target_rudder <= 179)
+        target_rudder++;
       break;
     case E_CLICK:
       // switch to auto-heading using the current_heading
