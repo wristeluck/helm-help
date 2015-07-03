@@ -1,3 +1,12 @@
+#include <FastIO.h>
+#include <I2CIO.h>
+#include <LCD.h>
+#include <LiquidCrystal.h>
+#include <LiquidCrystal_I2C.h>
+#include <LiquidCrystal_SR.h>
+#include <LiquidCrystal_SR2W.h>
+#include <LiquidCrystal_SR3W.h>
+
 #include <PID_v1.h>
 #include <mmc.h>
 #include <avr/eeprom.h>
@@ -15,16 +24,10 @@
 
 // Pin assignments
 #define PIN_SERVO        9  // must be a PWM  
-#define PIN_LCD_RS       4 
-#define PIN_LCD_EN       7
-#define PIN_LCD_D4      14
-#define PIN_LCD_D5      15
-#define PIN_LCD_D6      16
-#define PIN_LCD_D7      17
 #define PIN_ROT_A        3 // INT1 
 #define PIN_ROT_B        8 // potential to move this to A7
 //#define PIN_ROT_PORT     PINB
-#define PIN_ROT_PUSH    A6 // using analog input
+#define PIN_ROT_PUSH     7 
 #define PIN_ROT_LED_R    5
 #define PIN_ROT_LED_G    6
 #define PIN_ROT_LED_B    0 // no spare pins!!! - might be able to use 8
@@ -34,8 +37,7 @@
 #define LCD_LINES    2
 
 // LCD
-#include <LiquidCrystal.h>
-LiquidCrystal lcd(PIN_LCD_RS, PIN_LCD_EN, PIN_LCD_D4, PIN_LCD_D5, PIN_LCD_D6, PIN_LCD_D7);
+LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 
 // servo
 #include <Servo.h> 
@@ -198,7 +200,7 @@ void setup() {
         Fastwire::setup(400, true);
     #endif
 
-    pinMode(PIN_ROT_PUSH, INPUT_PULLUP); // sets analog pin for input 
+    pinMode(PIN_ROT_PUSH, INPUT);  
 
     lcd.begin(LCD_CHARS, LCD_LINES);
 
@@ -606,8 +608,8 @@ Where:
 
 void checkButton() {
  // ignore anything that happens within 5 ms of last activity (de-bounce)
+  boolean buttonPushed = (digitalRead(PIN_ROT_PUSH) == HIGH);
   if(buttonTime == 0) {
-    boolean buttonPushed = (analogRead(6) > 512);
     if(!buttonPushed) {  // button finally release after LongClick
       isPressed = false;
       buttonTime = millis();
@@ -616,13 +618,11 @@ void checkButton() {
   }
   if(millis() - buttonTime > 5) {  // de-bounce time - 5ms
     if(!isPressed) {  // currently not pressed
-      boolean buttonPushed = (analogRead(6) > 512);
       if(buttonPushed) {  // button now pressed
         isPressed = true;
         buttonTime = millis();
       }
     } else {  // currently pressed
-      boolean buttonPushed = (analogRead(6) > 512);
       if(buttonPushed && millis() - buttonTime > 1000) {
         // *** FIRE LongClick event
         trigger(E_LONG_CLICK);
