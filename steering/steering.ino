@@ -78,6 +78,12 @@ uint16_t fifoCount;     // count of all bytes currently in FIFO
 
 double target_yaw, current_yaw, target_rudder; // setpoint, input, output
 
+// when steering a fixed course we need to compare the IMU yaw to the GPS track
+// since IMU samples at 5Hz, need to integrate over several samples
+double course_delta = 0;
+double smoothed_yaw = 0;
+#define SMOOTH_FACTOR 0.3
+
 // target_rudder is subject to quick changes which could stress or break the
 // steering mechanism. current_rudder is a time dampened follower.
 byte current_rudder;
@@ -106,7 +112,7 @@ long buttonTime = millis();
 long rotaryTime = millis();
 boolean isPressed = false;
 
-typedef enum { E_NULL, E_ROT_INC, E_ROT_DEC, E_CLICK, E_LONG_CLICK } Event;
+typedef enum { E_NULL, E_ROT_INC, E_ROT_DEC, E_CLICK, E_LONG_CLICK, E_DOUBLE_CLICK } Event;
 typedef struct FSM StateMachine; 
 typedef void (*EventHandler)(StateMachine *sm, Event input);   
 void checkButton();
@@ -117,8 +123,14 @@ struct FSM
   EventHandler state; 
 };
 
+byte menu_selection = 1;
+
+// Main menu
+void fsm_menu(StateMachine *fsm, Event event);
 // Steer a fixed heading
 void fsm_heading(StateMachine *fsm, Event event);
+// Steer a fixed course
+void fsm_course(StateMachine *fsm, Event event);
 // Steer a fixed rudder angle
 void fsm_rudder(StateMachine *fsm, Event event);
 // Edit Kp (PID constant)
@@ -360,12 +372,23 @@ void loop() {
                                 (float)(qw*qw + qx*qx - 134217728l))  * 57.29578;
           } // end of scope of fifoBuffer (memory released)
 
-          // update the PID
-          // before ivoking the compute method, we need to guard against 0/360 degree
+	  // smooth out the yaw
+	  // only needed to get a general offset between yaw and the GPS track angle
+	  smoothed_yaw  = SMOOTH_FACTOR * current_yaw + (1 - SMOOTH_FACTOR) * smoothed_yaw;
+
+	  // if we are steering to a GPS course, then adjust the current yaw
+	  // by the delta between IMU yaw (smoothed) and GPS track angle
+	  // note this delta is calculated in the GPS decoding function
+	  if(ui.state == fsm_course) {
+	    current_yaw += course_delta;
+	  }
+	  
+	  // update the PID
+          // before invoking the compute method, we need to guard against 0/360 degree
           // wrap around confusing the PID and trying to drive the servo the wrong way
-          if (current_yaw - target_yaw < -180)
+          while (current_yaw - target_yaw < -180)
              current_yaw += 360;
-          if (current_yaw - target_yaw > 180)
+          while (current_yaw - target_yaw > 180)
              current_yaw -= 360;
 
           long current_time = millis();
@@ -416,11 +439,35 @@ void loop() {
     
 }
 
+const char lcd_blank[]  PROGMEM = "                ";
+const char lcd_menu_1[] PROGMEM = " Rudder Heading ";
+const char lcd_menu_2[] PROGMEM = " Course         ";
+const char lcd_pid_1[]  PROGMEM = "Kp=     Ki=     ";
+const char lcd_pid_2[]  PROGMEM = "Kd=     Db=   S ";
+
 void refresh_display() {
   char line[17];
  
-   // two screens, depending on state
-  if(ui.state == fsm_heading || ui.state == fsm_rudder) {
+  // different screens, depending on state
+  if(ui.state == fsm_menu) {
+    lcd.setCursor(0,0);
+    strcpy_P(line, (char*)pgm_read_word(lcd_menu_1));
+    if(menu_selection == 1) {
+      line[0] = 0x7E; // right arrow
+      line[7] = 0x7F; // left arrow      
+    } else if(menu_selection == 2) {
+      line[7] = 0x7E; // right arrow
+      line[15] = 0x7F; // left arrow      
+    } 
+    lcd.print(line);
+    lcd.setCursor(0,1);
+    strcpy_P(line, (char*)pgm_read_word(lcd_menu_2));
+    if(menu_selection == 1) {
+      line[0] = 0x7E; // right arrow
+      line[7] = 0x7F; // left arrow      
+    }
+    lcd.print(line);    
+  } else if(ui.state == fsm_heading || ui.state == fsm_rudder || ui.state == fsm_course) {
     // screen 1 - steering to fixed heading
 
     // line 1 - GPS output
@@ -428,7 +475,7 @@ void refresh_display() {
     lcd.print(gps_line);
 
     // line 2 - steering status
-    strcpy(line, "                ");
+    strcpy_P(line, (char*)pgm_read_word(lcd_blank));
 
     // heading
     int disp_yaw = (int)target_yaw % 360;
@@ -436,7 +483,7 @@ void refresh_display() {
     format_number(disp_yaw, 0, line+3);
     line[3] = 0xDF;  // degrees
 
-    if(ui.state == fsm_heading) {
+    if(ui.state == fsm_heading || ui.state == fsm_course) {
       // error - how well it's steering to heading
       int disp_error = (int)abs(target_yaw - current_yaw);
       format_number(disp_error, 0, line+8);
@@ -467,7 +514,7 @@ void refresh_display() {
     // screen 2 - PID setup
     // line 1
     lcd.setCursor(0,0);
-    strcpy(line, "Kp=     Ki=     ");
+    strcpy_P(line, (char*)pgm_read_word(lcd_pid_1));
     format_number(myPID.GetKp() / 10, 1, line+7);
     format_number(myPID.GetKi() / 10, 1, line+15);
 
@@ -482,7 +529,7 @@ void refresh_display() {
 
     // line 2 
     lcd.setCursor(0,1);
-    strcpy(line, "Kd=     Db=   S ");
+    strcpy_P(line, (char*)pgm_read_word(lcd_pid_2));
     format_number(myPID.GetKd() / 10, 1, line+7);
     format_number(deadband, 0, line+13);
 
@@ -582,7 +629,11 @@ Where:
 
     // heading *10   
     ptr = strtok_r(NULL, ",", &saveptr);
-    int track_angle = (int)(10.0 * atof(ptr));
+    double track = atof(ptr);
+    int track_angle = (int)(10.0 * track);
+
+    // update the difference between GPS track and IMU yaw
+    course_delta = track - smoothed_yaw;
 
     // date
     ptr = strtok_r(NULL, ",", &saveptr);
@@ -595,6 +646,7 @@ Where:
 //    Serial << "***GPS: "<<  sentence << ", " << latitude << ", " << longitude << ", " << speed_knots << ", " << track_angle << "\n"; 
     // log GPS data
     fileStore.logGps(millis(), sentence, latitude, longitude, speed_knots, track_angle);
+
     // set the lcd line
     strcpy(gps_line, "    kn         A");
     format_number(speed_knots, 1, gps_line+4);
@@ -610,7 +662,7 @@ void checkButton() {
  // ignore anything that happens within 5 ms of last activity (de-bounce)
   boolean buttonPushed = (digitalRead(PIN_ROT_PUSH) == HIGH);
   if(buttonTime == 0) {
-    if(!buttonPushed) {  // button finally release after LongClick
+    if(!buttonPushed) {  // button finally release after LongClick or DoubleClick
       isPressed = false;
       buttonTime = millis();
     }
@@ -619,8 +671,15 @@ void checkButton() {
   if(millis() - buttonTime > 5) {  // de-bounce time - 5ms
     if(!isPressed) {  // currently not pressed
       if(buttonPushed) {  // button now pressed
-        isPressed = true;
-        buttonTime = millis();
+        // if it was last pressed less than 0.5 sec ago, it's a double click
+        if(millis () - buttonTime < 500) {
+          // *** FIRE DoubleClick event
+          trigger(E_DOUBLE_CLICK);
+          buttonTime = 0; // signals the need to wait until button is released
+        } else {
+          isPressed = true;
+          buttonTime = millis();
+        }
       }
     } else {  // currently pressed
       if(buttonPushed && millis() - buttonTime > 1000) {
@@ -639,11 +698,72 @@ void checkButton() {
 }
 
 void trigger(Event event) {
-  (ui.state)(&ui, event);
+  if(event == E_DOUBLE_CLICK) {
+    // always return to main menu - centre the rudder
+    ui.state = fsm_menu;
+    // centre the rudder (slowly)
+    target_rudder = RUDDER_CENTRE;
+  } else {
+    (ui.state)(&ui, event);
+  }
   eventRaised = true;
 }
 
+void fsm_menu(StateMachine *fsm, Event event) {
+  switch(event) {
+    case E_ROT_INC:
+      menu_selection++;
+      if(menu_selection > 3) menu_selection = 1;
+      break;
+    case E_ROT_DEC:
+      menu_selection--;
+      if(menu_selection < 1) menu_selection = 3;
+      break;
+    case E_CLICK:
+      // select current option
+      switch(menu_selection) {
+        case 1: // rudder
+          autoSteer = false; // turn off PID control
+          fsm->state = fsm_rudder;
+          break;
+        case 2: // heading
+          // switch to auto-heading using the current_heading
+          target_yaw = current_yaw;
+          autoSteer = true; // turn on PID control
+          fsm->state = fsm_heading;
+          break;
+        case 3: // course
+          // switch to fixed course using the current course
+          target_yaw = current_yaw;
+          autoSteer = true; // turn on PID control
+          fsm->state = fsm_course;
+      }
+      break;
+    case E_LONG_CLICK:
+      fsm->state = fsm_kp;
+      break;
+  }
+}
+
 void fsm_heading(StateMachine *fsm, Event event) {
+  switch(event) {
+    case E_ROT_INC:
+      target_yaw++;
+      break;
+    case E_ROT_DEC:
+      target_yaw--;
+      break;
+    case E_CLICK:
+      autoSteer = false; // turn off PID control
+      fsm->state = fsm_rudder;
+      break;
+    case E_LONG_CLICK:
+      fsm->state = fsm_kp;
+      break;
+  }
+}
+
+void fsm_course(StateMachine *fsm, Event event) {
   switch(event) {
     case E_ROT_INC:
       target_yaw++;
